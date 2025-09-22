@@ -52,7 +52,7 @@ triggers:
   - trigger: event
     event_type: start-room-cleaning
     event_data:
-      vacuum: !input 
+      vacuum: !input vacuum_entity
     id: start-room-cleaning
 conditions: []
 actions:
