@@ -230,7 +230,7 @@ actions:
             data:
               status: needs_action
             target:
-              entity_id: todo.to_clean
+              entity_id: "{{ todo_list_entity }}"
             response_variable: items_to_clean
           - variables:
               vacuum_device_id: "{{ device_attr(vacuum_entity,'id') }}"
