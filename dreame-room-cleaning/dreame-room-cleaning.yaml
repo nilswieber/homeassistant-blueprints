@@ -72,8 +72,6 @@ actions:
     target:
       entity_id: "{{ todo_list_entity }}"
     response_variable: items_to_clean
-    data:
-      status: needs_action
   - if:
       - condition: template
         value_template: "{{ items_to_clean[todo_list_entity]['items'] |count <= 0 }}"
