@@ -248,7 +248,7 @@ actions:
                 select('match','select\..*room.*_cleaning_mode') |list }}
               preferred_cleaning_mode: "{{ trigger.event.data.preferred_cleaning_mode |\_default('sweeping_and_mopping') }}"
               room_definitions: >-
-                {{ items_to_clean['todo.to_clean']['items']|
+                {{ items_to_clean[todo_list_entity]['items']|
                 map(attribute='description') | map('from_json') | list }}
               rooms: "{{ room_definitions | map(attribute='id') | map('int') | list }}"
           - action: select.select_option
