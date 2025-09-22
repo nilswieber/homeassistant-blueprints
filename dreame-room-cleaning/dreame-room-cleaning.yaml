@@ -258,10 +258,10 @@ actions:
             target:
               entity_id: "{{ clean_genius_entity }}"
           - action: switch.turn_on
-          metadata: {}
-          data: {}
-          target:
-            entity_id: "{{ customized_cleaning_entity }}"
+            metadata: {}
+            data: {}
+            target:
+              entity_id: "{{ customized_cleaning_entity }}"
           - action: select.select_option
             metadata: {}
             data:
