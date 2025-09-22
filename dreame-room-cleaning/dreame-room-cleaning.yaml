@@ -257,6 +257,11 @@ actions:
               option: "off"
             target:
               entity_id: "{{ clean_genius_entity }}"
+          - action: switch.turn_on
+          metadata: {}
+          data: {}
+          target:
+            entity_id: "{{ customized_cleaning_entity }}"
           - action: select.select_option
             metadata: {}
             data:
@@ -269,11 +274,6 @@ actions:
               option: "{{ preferred_cleaning_mode }}"
             target:
               entity_id: "{{ cleaning_mode_entities }}"
-          - action: switch.turn_on
-            metadata: {}
-            data: {}
-            target:
-              entity_id: "{{ customized_cleaning_entity }}"
           - data:
               segments: "{{ rooms }}"
             target:
