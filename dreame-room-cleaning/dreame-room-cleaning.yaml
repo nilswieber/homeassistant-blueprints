@@ -137,7 +137,7 @@ actions:
                       map(attribute='description') | map('from_json') | list }}
                 - variables:
                     cleaned_room_id: >-
-                      {{ state_attr(cleaned_room_entity,'room_id') }}
+                      {{ state_attr(current_room_entity,'room_id') }}
                     cleaned_room: "{{ states(current_room_entity) }}"
                     start_area: "{{ states(cleaned_area_entity) | float }}"
                 - variables:
