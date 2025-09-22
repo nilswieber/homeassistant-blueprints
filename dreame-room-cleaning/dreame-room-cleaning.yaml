@@ -56,6 +56,10 @@ triggers:
       - !input vacuum_entity
     to: cleaning
     id: cleaning
+    for:
+      hours: 0
+      minutes: 0
+      seconds: 5
   - trigger: event
     event_type: start-room-cleaning
     event_data:
