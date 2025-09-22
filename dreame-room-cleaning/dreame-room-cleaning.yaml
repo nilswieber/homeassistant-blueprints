@@ -1,6 +1,6 @@
 blueprint:
   name: Dreame Room Cleaning
-  description: Tracks the cleaned rooms per day
+  description: Tracks the cleaned rooms per day. Allows to start a cleaning based on uncleaned rooms for that day.
   domain: automation
   input:
     vacuum_entity:
