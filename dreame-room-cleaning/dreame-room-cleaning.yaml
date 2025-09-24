@@ -200,7 +200,7 @@ actions:
         sequence:
           - if:
               - condition: template
-                value_template: "{{ states(cleaned_area_entity) == 0 }}"
+                value_template: "{{ (states(cleaned_area_entity) | float(-1)) == 0 }}"
             then:
               - repeat:
                   count: "{{ all_rooms_to_clean | count }}"
