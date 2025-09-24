@@ -22,6 +22,8 @@ blueprint:
           multiple: false
     todo_list_entity:
       name: ToDo-List
+      description: >
+        An (empty) ToDo-List, which will be used to store the state of the rooms and to indicate, which shall be cleaned.
       selector:
         entity:
           filter:
@@ -85,6 +87,8 @@ blueprint:
                 number:
     occupancy_sensors:
       name: All Used Occupancy Sensors
+      description: >
+        Due to technical reasons **all** Occupancy Entities listed in the *Room Settings* have to be specified here to be detected.
       selector:
         entity:
           filter:
