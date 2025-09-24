@@ -336,7 +336,7 @@ actions:
               - action: dreame_vacuum.vacuum_clean_segment
                 data:
                   segments: >
-                    {{ rooms | map(attribute="id") }}
+                    {{ rooms | map(attribute="id") | list }}
                 target:
                   entity_id: "{{ vacuum_entity }}"
       - conditions:
