@@ -251,6 +251,7 @@ actions:
                 data:
                   item: "{{ current_room.todo_item}}"
                   description: "{{ current_room | to_json }}"
+                  status: "{{ new_item_status }}"
                 target:
                   entity_id: "{{ todo_list_entity }}"  
       - conditions:
