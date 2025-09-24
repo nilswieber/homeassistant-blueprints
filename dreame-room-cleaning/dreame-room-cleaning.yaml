@@ -91,11 +91,55 @@ blueprint:
             domain: binary_sensor
             device_class: occupancy
           multiple: true
+    persons:
+      name: Persons
+      description: >
+        Persons, which trigger a cleaning after they have all left.
+
+        *Only works if the Zone is set*
+      selector:
+        entity:
+          filter:
+            domain: person
+          multiple: true
+      default: []
+    home_zone:
+      name: Zone (Home)
+      description: >
+        If set it triggers a cleaning after all specified Persons have left.
+      selector:
+        entity:
+          filter:
+            domain: zone
+          multiple: false
+      default: []
+    leave_duration:
+      name: Zone Leave - Start Cleaning Delay
+      description: >
+        Delay after which a cleaning is initiated after all specified Persons have left the Zone.
+      selector:
+        duration:
+      default:
+        hours: 0
+        minutes: 0
+        seconds: 0
+    enter_duration:
+      name: Zone Enter - Stop Cleaning Delay
+      description: >
+        Delay after which a cleaning is stopped if a Person enters the zone during the cleaning.
+      selector:
+        duration:
+      default:
+        hours: 0
+        minutes: 0
+        seconds: 0
 variables:
   vacuum_entity: !input vacuum_entity
   todo_list_entity: !input todo_list_entity
   cleaned_area_entity: !input cleaned_area_entity
   current_room_entity: !input current_room_entity
+  persons: !input persons
+  home_zone: !input home_zone
 triggers:
   - trigger: time
     at: "00:00:00"
@@ -114,6 +158,16 @@ triggers:
     entity_id: !input occupancy_sensors
     to: null
     id: occupancy-change
+  - trigger: state
+    entity_id: !input home_zone
+    attribute: persons
+    id: persons-change-leave
+    for: !input leave_duration
+  - trigger: state
+    entity_id: !input home_zone
+    attribute: persons
+    id: persons-change-enter
+    for: !input enter_duration
 conditions: []
 actions:
   - action: todo.get_items
@@ -361,7 +415,7 @@ actions:
                   occupancy_duration: "{{ ((trigger.to_state.last_changed - trigger.from_state.last_changed).seconds / 60) | round(2) }}"
                   room: >
                     {{room | combine({ 
-                      "occupancy_minutes": room.occupancy_minutes + occupancy_duration
+                      "occupancy_minutes": (room.occupancy_minutes + occupancy_duration) | round(2)
                     })}}
                   above_threshold: "{{ room.occupancy_minutes >= (room.occupancy_threshold | float(0)) }}"
           - if:
@@ -382,5 +436,31 @@ actions:
                   description: "{{ room | to_json }}"
                 target:
                   entity_id: "{{ todo_list_entity }}"            
-          
+      - conditions:
+          - condition: trigger
+            id:
+              - persons-change-leave
+              - persons-change-enter
+        sequence:
+            - variables:
+                from_person_count: "{{ trigger.from_state.attributes.persons | intersect(persons) | count }}"
+                to_person_count: "{{ trigger.to_state.attributes.persons | intersect(persons) | count }}"
+            - if:
+              - condition: template
+                value_template: "{{ trigger.id == 'persons-change-enter' and from_person_count == 0 and to_person_count > 0 and states(vacuum_entity) == 'cleaning' }}"
+              then:
+                - action: vacuum.return_to_base
+                  metadata: {}
+                  data: {}
+                  target:
+                    entity_id: "{{ vacuum_entity }}"
+            - if:
+              - condition: template
+                value_template: "{{ trigger.id == 'persons-change-leave' and from_person_count > 0 and to_person_count == 0 and states(vacuum_entity) != 'cleaning' }}"
+              then:
+                - event: start-room-cleaning
+                  event_data:
+                    vacuum: "{{ vacuum_entity }}"
+
+
 mode: queued
