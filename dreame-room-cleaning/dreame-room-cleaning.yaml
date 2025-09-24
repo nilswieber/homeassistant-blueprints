@@ -5,10 +5,11 @@ blueprint:
 
     # Start the cleaning
 
-    ```yaml
-    vacuum: vacuum.your_vacuum
-    prefered_cleaning_mode: sweeping # (optional) Default: sweeping_and_mopping 
-    ```
+    To start a cleaning trigger the event: `start-room-cleaning`.
+
+    The event data has to contain `vacuum: vacuum.your_vacuum`.
+
+    You can additionally pass `prefered_cleaning_mode: sweeping # (optional) Default: sweeping_and_mopping`
   domain: automation
   input:
     vacuum_entity:
@@ -43,6 +44,53 @@ blueprint:
             domain:
             - sensor
           multiple: false
+    room_overrides:
+      name: Room Settings
+      selector:
+        object:
+          label_field: id
+          description_field: label
+          multiple: true
+          fields:
+            id:
+              label: Room ID
+              selector:
+                number:
+            label:
+              label: Room Label (Optional)
+              required: false
+              selector:
+                text:
+            default_cleaning_mode:
+              label: Default Cleaning Mode (Optional)
+              required: false
+              selector:
+                select:
+                  options:
+                    - sweeping
+                    - mopping
+                    - sweeping_and_mopping
+            occupancy_entity:
+              label: "[Occupancy] Entity (Optional)"
+              required: false
+              selector:
+                entity:
+                  filter:
+                    domain: binary_sensor
+                    device_class: occupancy
+            occupancy_threshold:
+              label: "[Occupancy] Reclean After Minutes (Optional)"
+              required: false
+              selector:
+                number:
+    occupancy_sensors:
+      name: All Used Occupancy Sensors
+      selector:
+        entity:
+          filter:
+            domain: binary_sensor
+            device_class: occupancy
+          multiple: true
 variables:
   vacuum_entity: !input vacuum_entity
   todo_list_entity: !input todo_list_entity
@@ -62,6 +110,10 @@ triggers:
       - !input cleaned_area_entity
     to: null
     id: area-change
+  - trigger: state
+    entity_id: !input occupancy_sensors
+    to: null
+    id: occupancy-change
 conditions: []
 actions:
   - action: todo.get_items
@@ -90,39 +142,56 @@ actions:
                 item: "{{ vacuum_room.name }}"
                 description: "{{ room_definition |to_json }}"
   - variables:
+      room_overrides: !input room_overrides
       vacuum_device_id: "{{ device_attr(vacuum_entity,'id') }}"
       all_room_definitions: >-
         {{ items_to_clean[todo_list_entity]['items']| map(attribute='description') | map('from_json') | list }}
       current_room_id: >-
         {{ state_attr(current_room_entity,'room_id') }}
-      cleaning_progress_entity: >
+      cleaning_progress_entity: >-
         {{ device_entities(vacuum_device_id) | select('match','sensor\..*_cleaning_progress') |list |first }}
       cleaning_count_entity: >-
-        {{ device_entities(vacuum_device_id) | select('match','sesnor\..*_cleaning_count') |list |first }}
+        {{ device_entities(vacuum_device_id) | select('match','sensor\..*_cleaning_count') |list |first }}
       cleaning_progress: "{{ states(cleaning_progress_entity) }}"
       cleaning_count: "{{ states(cleaning_count_entity) }}"
       current_room: "{{ all_room_definitions | selectattr('id','eq',current_room_id) | first }}"
   - repeat:
-    count: "{{ all_room_definitions | count }}"
-    sequence:
-      - variables:
-          room_definition: "{{ all_room_definitions[repeat.index - 1] }}"
-      - variables:
-          room_definition: >-
-            {{ room_definition | combine({
-              "todo_item": items_to_clean[todo_list_entity]['items'][repeat.index - 1].summary,
-              "threshold_area": room_definition.threshold_area | default(-1),
-              "is_todo": items_to_clean[todo_list_entity]['items'][repeat.index - 1].status == 'needs_action'
-              }) 
-            }}
-      - data:
-          item: "{{ room_definition.todo_item }}"
-          description: "{{ room_definition | to_json }}"
-        action: todo.update_item
-        target:
-          entity_id: "{{ todo_list_entity }}"
+      count: "{{ all_room_definitions | count }}"
+      sequence:
+        - variables:
+            room_definition: "{{ all_room_definitions[repeat.index - 1] }}"
+            room_override: "{{ room_overrides | selectattr('id','eq',room_definition.id) | list}}"
+        - if:
+            - condition: template
+              value_template: "{{ room_override |count > 0 }}"
+          then:
+            - variables:
+                room_definition: >-
+                  {{ room_definition | combine(room_override | first) }}                
+        - variables:
+            room_definition: >-
+              {{ room_definition | combine({
+                "todo_item": items_to_clean[todo_list_entity]['items'][repeat.index - 1].summary,
+                "threshold_area": room_definition.threshold_area | default(-1),
+                "is_todo": items_to_clean[todo_list_entity]['items'][repeat.index - 1].status == 'needs_action',
+                "cleaned_area": room_definition.cleaned_area | default(0) 
+                }) 
+              }}
+        - data:
+            item: "{{ room_definition.todo_item }}"
+            description: "{{ room_definition | to_json }}"
+          action: todo.update_item
+          target:
+            entity_id: "{{ todo_list_entity }}"
+  - action: todo.get_items
+    metadata: {}
+    target:
+      entity_id: "{{ todo_list_entity }}"
+    response_variable: items_to_clean 
   - variables:
-      all_rooms_to_clean: "{{ all_room_definitions | selectattr('is_todo','eq', true) }}"
+      all_room_definitions: >-
+              {{ items_to_clean[todo_list_entity]['items']| map(attribute='description') | map('from_json') | list }}
+      all_rooms_to_clean: "{{ all_room_definitions | selectattr('is_todo','eq', true) | list}}"
   - choose:
       - conditions:
           - condition: trigger
@@ -134,27 +203,29 @@ actions:
                 value_template: "{{ states(cleaned_area_entity) == 0 }}"
             then:
               - repeat:
-                count: "{{ all_rooms_to_clean | count }}"
-                sequence:
-                  - variables:
-                      room_definition: >-
-                        {{ all_rooms_to_clean[repeat.index - 1] | combine({
-                          "cleaned_area": 0,
-                          "last_clean_cycle": cleaning_count + 1
-                          }) 
-                        }}
-                  - action: todo.update_item
-                    data:
-                      item: "{{ room_definition.todo_item}}"
-                      description: "{{ room_definition | to_json }}"
-                    target:
-                      entity_id: "{{ todo_list_entity }}"
+                  count: "{{ all_rooms_to_clean | count }}"
+                  sequence:
+                    - variables:
+                        room_definition: >-
+                          {{ all_rooms_to_clean[repeat.index - 1] | combine({
+                            "cleaned_area": 0,
+                            "last_clean_cycle": cleaning_count + 1
+                            }) 
+                          }}
+                    - action: todo.update_item
+                      data:
+                        item: "{{ room_definition.todo_item}}"
+                        description: "{{ room_definition | to_json }}"
+                      target:
+                        entity_id: "{{ todo_list_entity }}"
             else:
+              - variables:
+                  prev_cleaned_area: "{{ current_room.cleaned_area | default(0) }}"
               - variables:
                   diff_area: "{{ (trigger.to_state.state | float) - (trigger.from_state.state | float) }}"
                   current_room: >
                     {{ current_room | combine({
-                        "cleaned_area": current_room.cleaned_area + diff_area,
+                        "cleaned_area": prev_cleaned_area + diff_area,
                         "last_clean": now().isoformat()
                       })
                     }}
@@ -165,6 +236,17 @@ actions:
                     {% else %}
                       needs_action
                     {% endif %}
+              - if:
+                  - condition: template
+                    value_template: "{{ area_done }}"
+                then:
+                  - variables:
+                      current_room: >
+                        {{ current_room | combine({
+                            "last_complete_clean": current_room.last_clean,
+                            "occupancy_minutes": 0
+                          })
+                        }}
               - action: todo.update_item
                 data:
                   item: "{{ current_room.todo_item}}"
@@ -197,13 +279,6 @@ actions:
             id:
               - start-room-cleaning
         sequence:
-          - action: todo.get_items
-            metadata: {}
-            data:
-              status: needs_action
-            target:
-              entity_id: "{{ todo_list_entity }}"
-            response_variable: items_to_clean
           - variables:
               vacuum_device_id: "{{ device_attr(vacuum_entity,'id') }}"
               clean_genius_entity: >-
@@ -219,10 +294,7 @@ actions:
                 {{ device_entities(vacuum_device_id) |
                 select('match','select\..*room.*_cleaning_mode') |list }}
               preferred_cleaning_mode: "{{ trigger.event.data.preferred_cleaning_mode |\_default('sweeping_and_mopping') }}"
-              room_definitions: >-
-                {{ items_to_clean[todo_list_entity]['items']|
-                map(attribute='description') | map('from_json') | list }}
-              rooms: "{{ room_definitions | map(attribute='id') | map('int') | list }}"
+              rooms: "{{ all_rooms_to_clean }}"
           - action: select.select_option
             metadata: {}
             data:
@@ -265,4 +337,48 @@ actions:
                   segments: "{{ rooms }}"
                 target:
                   entity_id: "{{ vacuum_entity }}"
+      - conditions:
+          - condition: trigger
+            id:
+              - occupancy-change
+        sequence:
+          - variables:
+              room: "{{ all_room_definitions | selectattr('occupancy_entity','defined') | selectattr('occupancy_entity','eq',trigger.entity_id) | first}}"
+              above_threshold: false
+          - variables:
+              room: >
+                {{room | combine({ 
+                  "occupancy_threshold": (room.occupancy_threshold | default(-1)),
+                  "occupancy_minutes": (room.occupancy_minutes | default(0))
+                })}}
+          - if:
+              - condition: template
+                value_template: "{{ (trigger.to_state.state == 'off') }}"
+            then:
+              - variables:
+                  occupancy_duration: "{{ ((trigger.to_state.last_changed - trigger.from_state.last_changed).seconds / 60) | round(2) }}"
+                  room: >
+                    {{room | combine({ 
+                      "occupancy_minutes": room.occupancy_minutes + occupancy_duration
+                    })}}
+                  above_threshold: "{{ room.occupancy_minutes >= (room.occupancy_threshold | float(0)) }}"
+          - if:
+              - condition: template
+                value_template: "{{ above_threshold }}"
+            then:
+              - action: todo.update_item
+                data:
+                  item: "{{ room.todo_item}}"
+                  description: "{{ room | to_json }}"
+                  status: "needs_action"
+                target:
+                  entity_id: "{{ todo_list_entity }}"
+            else:
+              - action: todo.update_item
+                data:
+                  item: "{{ room.todo_item}}"
+                  description: "{{ room | to_json }}"
+                target:
+                  entity_id: "{{ todo_list_entity }}"            
+          
 mode: queued
