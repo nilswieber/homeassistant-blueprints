@@ -56,6 +56,7 @@ blueprint:
           fields:
             id:
               label: Room ID
+              required: true
               selector:
                 number:
             label:
@@ -277,41 +278,45 @@ actions:
                       target:
                         entity_id: "{{ todo_list_entity }}"
             else:
-              - variables:
-                  prev_cleaned_area: "{{ current_room.cleaned_area | default(0) }}"
-              - variables:
-                  diff_area: "{{ (trigger.to_state.state | float) - (trigger.from_state.state | float) }}"
-                  current_room: >
-                    {{ current_room | combine({
-                        "cleaned_area": prev_cleaned_area + diff_area,
-                        "last_clean": now().isoformat()
-                      })
-                    }}
-                  area_done: "{{ current_room.cleaned_area >= current_room.threshold_area}}"
-                  new_item_status: >
-                    {% if(area_done) %}
-                      completed
-                    {% else %}
-                      needs_action
-                    {% endif %}
               - if:
                   - condition: template
-                    value_template: "{{ area_done }}"
+                    value_template: "{{ states(vacuum_entity) == 'cleaning' }}"
                 then:
                   - variables:
+                      prev_cleaned_area: "{{ current_room.cleaned_area | default(0) }}"
+                  - variables:
+                      diff_area: "{{ (trigger.to_state.state | float) - (trigger.from_state.state | float) }}"
                       current_room: >
                         {{ current_room | combine({
-                            "last_complete_clean": current_room.last_clean,
-                            "occupancy_minutes": 0
+                            "cleaned_area": prev_cleaned_area + diff_area,
+                            "last_clean": now().isoformat()
                           })
                         }}
-              - action: todo.update_item
-                data:
-                  item: "{{ current_room.todo_item}}"
-                  description: "{{ current_room | to_json }}"
-                  status: "{{ new_item_status }}"
-                target:
-                  entity_id: "{{ todo_list_entity }}"  
+                      area_done: "{{ current_room.cleaned_area >= current_room.threshold_area}}"
+                      new_item_status: >
+                        {% if(area_done) %}
+                          completed
+                        {% else %}
+                          needs_action
+                        {% endif %}
+                  - if:
+                      - condition: template
+                        value_template: "{{ area_done }}"
+                    then:
+                      - variables:
+                          current_room: >
+                            {{ current_room | combine({
+                                "last_complete_clean": current_room.last_clean,
+                                "occupancy_minutes": 0
+                              })
+                            }}
+                  - action: todo.update_item
+                    data:
+                      item: "{{ current_room.todo_item}}"
+                      description: "{{ current_room | to_json }}"
+                      status: "{{ new_item_status }}"
+                    target:
+                      entity_id: "{{ todo_list_entity }}"  
       - conditions:
           - condition: trigger
             id:
