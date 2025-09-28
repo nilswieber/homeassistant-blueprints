@@ -48,6 +48,7 @@ blueprint:
           multiple: false
     room_overrides:
       name: Room Settings
+      default: []
       selector:
         object:
           label_field: id
@@ -90,6 +91,7 @@ blueprint:
       name: All Used Occupancy Sensors
       description: >
         Due to technical reasons **all** Occupancy Entities listed in the *Room Settings* have to be specified here to be detected.
+      default: []
       selector:
         entity:
           filter:
