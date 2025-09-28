@@ -92,6 +92,11 @@ blueprint:
               required: false
               selector:
                 number:
+            self_clean_afterwards:
+              label: "Self Clean After Room"
+              required: false
+              selector:
+                boolean:
     occupancy_sensors:
       name: All Used Occupancy Sensors
       description: >
@@ -180,6 +185,11 @@ triggers:
     attribute: persons
     id: persons-change-enter
     for: !input enter_duration
+  - trigger: state
+    entity_id:
+      - !input current_room_entity
+    to: null
+    id: room-change
 conditions: []
 actions:
   - action: todo.get_items
@@ -218,8 +228,11 @@ actions:
         {{ device_entities(vacuum_device_id) | select('match','sensor\..*_cleaning_progress') |list |first }}
       cleaning_count_entity: >-
         {{ device_entities(vacuum_device_id) | select('match','sensor\..*_cleaning_count') |list |first }}
+      self_clean_entity: >-
+        {{ device_entities(vacuum_device_id) | select('match','button\..*_self_clean') |list |first }}
       cleaning_progress: "{{ states(cleaning_progress_entity) }}"
       cleaning_count: "{{ states(cleaning_count_entity) }}"
+      clean_cycle: "{{ cleaning_count + 1 }}"
       current_room: "{{ all_room_definitions | selectattr('id','eq',current_room_id) | first }}"
   - repeat:
       count: "{{ all_room_definitions | count }}"
@@ -275,7 +288,7 @@ actions:
                         room_definition: >-
                           {{ all_rooms_to_clean[repeat.index - 1] | combine({
                             "cleaned_area": 0,
-                            "last_clean_cycle": cleaning_count + 1
+                            "last_clean_cycle": clean_cycle
                             }) 
                           }}
                     - action: todo.update_item
@@ -477,6 +490,20 @@ actions:
                 - event: start-room-cleaning
                   event_data:
                     vacuum: "{{ vacuum_entity }}"
-
-
+      - conditions:
+          - condition: trigger
+            id:
+              - room-change  
+        sequence:
+          - variables:
+              prev_room_id: "{{ trigger.from_state.attributes.room_id }}"
+              prev_room: "{{ all_room_definitions | selectattr('id','eq',prev_room_id) | first }}"
+          - if:
+              - condition: template
+                value_template: "{{ prev_room.last_clean_cycle == clean_cycle and prev_room.cleaned_area >= prev_room.threshold_area and prev_room.self_clean_afterwards}}"
+            then:
+              - action: button.press
+                target:
+                  entity_id: "{{ self_clean_entity }}"
+                data: {}
 mode: queued
