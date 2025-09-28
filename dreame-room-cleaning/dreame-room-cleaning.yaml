@@ -65,6 +65,11 @@ blueprint:
               required: false
               selector:
                 text:
+            threshold_area:
+              label: Threshold Area (Optional)
+              required: false
+              selector:
+                number:
             default_cleaning_mode:
               label: Default Cleaning Mode (Optional)
               required: false
