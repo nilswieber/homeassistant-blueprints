@@ -157,6 +157,15 @@ blueprint:
       selector:
         boolean:
       default: false   
+    skip_self_clean_progress_threshold:
+      name: Skip Self Clean - Progress Threshold
+      description: >
+        Skips the Self Cleaning configured for a room, if the cleaning progress is greater or equal the specified threshold.
+      selector:
+        number:
+          min: 0
+          max: 100
+          unit_of_measurement: "%"
 variables:
   vacuum_entity: !input vacuum_entity
   todo_list_entity: !input todo_list_entity
@@ -165,6 +174,7 @@ variables:
   persons: !input persons
   home_zone: !input home_zone
   wash_mop_before: !input wash_mop_before
+  skip_self_clean_progress_threshold: !input skip_self_clean_progress_threshold
 triggers:
   - trigger: time
     at: "00:00:00"
@@ -517,7 +527,7 @@ actions:
               prev_room: "{{ all_room_definitions | selectattr('id','eq',prev_room_id) | first }}"
           - if:
               - condition: template
-                value_template: "{{ prev_room.last_clean_cycle == clean_cycle and prev_room.cleaned_area >= prev_room.threshold_area and prev_room.self_clean_afterwards and not(prev_room.self_clean_initiated)}}"
+                value_template: "{{ prev_room.last_clean_cycle == clean_cycle and prev_room.cleaned_area >= prev_room.threshold_area and prev_room.self_clean_afterwards and not(prev_room.self_clean_initiated) and cleaning_progress < skip_self_clean_progress_threshold}}"
             then:
               - action: button.press
                 target:
