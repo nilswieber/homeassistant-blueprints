@@ -166,6 +166,7 @@ blueprint:
           min: 0
           max: 100
           unit_of_measurement: "%"
+      default: 95
 variables:
   vacuum_entity: !input vacuum_entity
   todo_list_entity: !input todo_list_entity
