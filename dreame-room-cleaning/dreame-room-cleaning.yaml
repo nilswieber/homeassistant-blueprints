@@ -402,7 +402,6 @@ actions:
               cleaning_mode_entities: >-
                 {{ device_entities(vacuum_device_id) |
                 select('match','select\..*room.*_cleaning_mode') |list }}
-              preferred_cleaning_mode: "{{ trigger.event.data.preferred_cleaning_mode |\_default('sweeping_and_mopping') }}"
               rooms: "{{ all_rooms_to_clean }}"
           - action: select.select_option
             metadata: {}
@@ -433,7 +432,7 @@ actions:
                     room_id: "{{ room.id }}"
                     cleaning_times_entity: "{{ cleaning_times_entities | select('match','.*room_'+ (room_id | string) +'_.*') | list | first}}"
                     cleaning_mode_entity: "{{ cleaning_mode_entities | select('match','.*room_'+ (room_id | string) +'_.*') | list | first}}"
-                    preferred_cleaning_mode: "{{ room.default_cleaning_mode | default(preferred_cleaning_mode) }}"
+                    cleaning_mode: "{{ trigger.event.data.preferred_cleaning_mode | default(room.default_cleaning_mode | default('sweeping_and_mopping')) }}"
                 - action: select.select_option
                   metadata: {}
                   data:
@@ -443,7 +442,7 @@ actions:
                 - action: select.select_option
                   metadata: {}
                   data:
-                    option: "{{ preferred_cleaning_mode }}"
+                    option: "{{ cleaning_mode }}"
                   target:
                     entity_id: "{{ cleaning_mode_entity }}"
           - if:
