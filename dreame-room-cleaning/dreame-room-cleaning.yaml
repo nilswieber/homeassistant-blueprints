@@ -425,8 +425,8 @@ actions:
               sequence:
                 - variables:
                     room: "{{ rooms[repeat.index - 1] }}"
-                    cleaning_times_entity: "{{ cleaning_times_entities | select('match','.*room_'+room.id+'_.*') | list | first}}"
-                    cleaning_mode_entity: "{{ cleaning_mode_entities | select('match','.*room_'+room.id+'_.*') | list | first}}"
+                    cleaning_times_entity: "{{ cleaning_times_entities | select('match','.*room_'+str(room.id)+'_.*') | list | first}}"
+                    cleaning_mode_entity: "{{ cleaning_mode_entities | select('match','.*room_'+str(room.id)+'_.*') | list | first}}"
                     preferred_cleaning_mode: "{{ room.default_cleaning_mode | default(preferred_cleaning_mode) }}"
                 - action: select.select_option
                   metadata: {}
