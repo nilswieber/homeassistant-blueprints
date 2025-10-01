@@ -151,7 +151,7 @@ blueprint:
         minutes: 0
         seconds: 0
     wash_mop_before:
-      name: Pre Cleaning - Intiate Self Clean
+      name: Pre Cleaning - Initiate Self Clean
       description: >
         Explicitly start a Self Clean before the Cleaning Task
       selector:
