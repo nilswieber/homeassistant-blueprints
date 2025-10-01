@@ -433,7 +433,7 @@ actions:
                   data:
                     option: 1x
                   target:
-                    entity_id: "{{cleaning_times_entity}}"
+                    entity_id: "{{ cleaning_times_entity }}"
                 - action: select.select_option
                   metadata: {}
                   data:
