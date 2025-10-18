@@ -197,7 +197,7 @@ variables:
   home_zone: !input home_zone
   wash_mop_before: !input wash_mop_before
   skip_self_clean_progress_threshold: !input skip_self_clean_progress_threshold
-  cleaning_order: !cleaning_order
+  cleaning_order: !input cleaning_order
 triggers:
   - trigger: time
     at: "00:00:00"
