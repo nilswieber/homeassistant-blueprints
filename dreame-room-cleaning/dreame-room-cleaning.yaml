@@ -9,7 +9,7 @@ blueprint:
 
     The event data has to contain `vacuum: vacuum.your_vacuum`.
 
-    You can additionally pass `prefered_cleaning_mode: sweeping # (optional) Default: sweeping_and_mopping`
+    You can additionally pass `prefered_cleaning_mode: sweeping` and chosse from `sweeping`,`mopping` and `sweeping_and_mopping`
   domain: automation
   input:
     vacuum_entity:
