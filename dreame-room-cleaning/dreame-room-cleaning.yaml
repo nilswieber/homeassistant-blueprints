@@ -97,6 +97,10 @@ blueprint:
               required: false
               selector:
                 boolean:
+            cleaning_priority:
+              label: "Cleaning Priority"
+              selector:
+                number:
     occupancy_sensors:
       name: All Used Occupancy Sensors
       description: >
@@ -167,6 +171,18 @@ blueprint:
           max: 100
           unit_of_measurement: "%"
       default: 95
+    cleaning_order:
+      name: Cleaning Order
+      description: >
+        Defines in which order the rooms are cleaned
+      selector:
+        select:
+          options:
+            - label: "Order of ToDo-List"
+              value: "todo"
+            - label: "Last Complete Clean"
+              value: "last_complete_clean"
+      default: "todo"
     pre_cleaning_actions:
       name: Pre Cleaning - Actions
       selector:
@@ -181,6 +197,7 @@ variables:
   home_zone: !input home_zone
   wash_mop_before: !input wash_mop_before
   skip_self_clean_progress_threshold: !input skip_self_clean_progress_threshold
+  cleaning_order: !cleaning_order
 triggers:
   - trigger: time
     at: "00:00:00"
@@ -277,7 +294,9 @@ actions:
                 "todo_item": items_to_clean[todo_list_entity]['items'][repeat.index - 1].summary,
                 "threshold_area": room_definition.threshold_area | default(-1),
                 "is_todo": items_to_clean[todo_list_entity]['items'][repeat.index - 1].status == 'needs_action',
-                "cleaned_area": room_definition.cleaned_area | default(0) 
+                "cleaned_area": room_definition.cleaned_area | default(0),
+                "cleaning_priority": room_definition.cleaning_priority | default(-1),
+                "last_complete_clean": room_definition.last_complete_clean | default("1970-01-01T00:00:00.000000+00:00")
                 }) 
               }}
         - data:
@@ -449,6 +468,12 @@ actions:
               - condition: template
                 value_template: "{{ (rooms | count) > 0 }}"
             then:
+              - if:
+                  - condition: template
+                    value_template: "{{ cleaning_order == 'last_complete_clean' }}"
+                then:
+                  - variables:
+                      room: "{{ rooms | sort(attribute='last_complete_clean') | sort(attribute='cleaning_priority', reverse=true) | list }}"
               - if:
                   - condition: template
                     value_template: "{{ wash_mop_before }}"
