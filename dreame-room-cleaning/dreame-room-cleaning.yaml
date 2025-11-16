@@ -472,7 +472,7 @@ actions:
               value_template: "{{ cleaning_order == 'last_complete_clean' }}"
             then:
               - variables:
-                  room: "{{ rooms | sort(attribute='last_complete_clean') | sort(attribute='cleaning_priority', reverse=true) | list }}"
+                  rooms: "{{ rooms | sort(attribute='last_complete_clean') | sort(attribute='cleaning_priority', reverse=true) | list }}"
           - repeat:
               count: "{{ rooms | count }}"
               sequence:
