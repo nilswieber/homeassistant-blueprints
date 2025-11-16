@@ -609,7 +609,7 @@ actions:
           - variables:
               prev_room: >
                 {{prev_room | combine({ 
-                  "post_actions": "{{ prev_room.post_actions | default({}) }}"
+                  "post_actions": (prev_room.post_actions | default({}))
                 })}}
           # Post Actions
           - if:
