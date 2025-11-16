@@ -154,13 +154,6 @@ blueprint:
         hours: 0
         minutes: 0
         seconds: 0
-    wash_mop_before:
-      name: Pre Cleaning - Initiate Self Clean
-      description: >
-        Explicitly start a Self Clean before the Cleaning Task
-      selector:
-        boolean:
-      default: false   
     skip_self_clean_progress_threshold:
       name: Skip Self Clean - Progress Threshold
       description: >
@@ -183,8 +176,27 @@ blueprint:
             - label: "Last Complete Clean"
               value: "last_complete_clean"
       default: "todo"
+    continue_room_threshold:
+      name: Continue Room - Threshold
+      description: >
+        Defines the threshold of the cleaning progress for a room, after which the vacuum shall still continue with the current room cleaning before stopping after leaving the finished room. The room progress depends on the configured *Threshold Area* of the room.
+      selector:
+        number:
+          min: 0
+          max: 100
+          unit_of_measurement: "%"
+      default: 100
     pre_cleaning_actions:
       name: Pre Cleaning - Actions
+      selector:
+        action:
+      default: []
+    room_finished_actions:
+      name: Room finished - Actions
+      description: >
+        Defines actions, which are executed if a finished room is left.
+
+        The finished room is exposed in the `room` variable.
       selector:
         action:
       default: []
@@ -195,9 +207,9 @@ variables:
   current_room_entity: !input current_room_entity
   persons: !input persons
   home_zone: !input home_zone
-  wash_mop_before: !input wash_mop_before
   skip_self_clean_progress_threshold: !input skip_self_clean_progress_threshold
   cleaning_order: !input cleaning_order
+  continue_room_threshold: !input continue_room_threshold
 triggers:
   - trigger: time
     at: "00:00:00"
@@ -333,10 +345,14 @@ actions:
                     - variables:
                         room_definition: >-
                           {{ all_rooms_to_clean[repeat.index - 1] | combine({
-                            "cleaned_area": 0,
-                            "self_clean_initiated": false,
-                            "last_clean_cycle": clean_cycle
-                            }) 
+                              "cleaned_area": 0,
+                              "progress": 0,
+                              "self_clean_initiated": false,
+                              "last_clean_cycle": clean_cycle,
+                              "post_actions": {
+                                "executed": false
+                              }
+                            })
                           }}
                     - action: todo.update_item
                       data:
@@ -356,6 +372,7 @@ actions:
                       current_room: >
                         {{ current_room | combine({
                             "cleaned_area": prev_cleaned_area + diff_area,
+                            "progress": min(100, (prev_cleaned_area + diff_area) / current_room.threshold_area),
                             "last_clean": now().isoformat()
                           })
                         }}
@@ -478,14 +495,6 @@ actions:
                 then:
                   - variables:
                       room: "{{ rooms | sort(attribute='last_complete_clean') | sort(attribute='cleaning_priority', reverse=true) | list }}"
-              - if:
-                  - condition: template
-                    value_template: "{{ wash_mop_before }}"
-                then:
-                  - action: button.press
-                    target:
-                      entity_id: "{{ self_clean_entity }}"
-                    data: {}
               - choose: []
                 default: !input pre_cleaning_actions
               - action: dreame_vacuum.vacuum_clean_segment
@@ -550,11 +559,26 @@ actions:
               - condition: template
                 value_template: "{{ trigger.id == 'persons-change-enter' and from_person_count == 0 and to_person_count > 0 and states(vacuum_entity) == 'cleaning' }}"
               then:
-                - action: vacuum.return_to_base
-                  metadata: {}
-                  data: {}
-                  target:
-                    entity_id: "{{ vacuum_entity }}"
+                - if:
+                  - condition: template
+                    value_template: "{{ (current_room.progress | default(0)) > continue_room_threshold }}"
+                  then:
+                    - variables:
+                        post_actions: >
+                          {{ current_room.post_actions | default({}) | combine({
+                              "stop": true
+                            })
+                          }}
+                        current_room: >                     
+                          {{current_room | combine({ 
+                            "post_actions": post_actions
+                          })}}
+                  else:
+                    - action: vacuum.return_to_base
+                      metadata: {}
+                      data: {}
+                      target:
+                        entity_id: "{{ vacuum_entity }}"
             - if:
               - condition: template
                 value_template: "{{ trigger.id == 'persons-change-leave' and from_person_count > 0 and to_person_count == 0 and states(vacuum_entity) != 'cleaning' }}"
@@ -571,23 +595,55 @@ actions:
               prev_room_id: "{{ trigger.from_state.attributes.room_id }}"
               prev_room: "{{ all_room_definitions | selectattr('id','eq',prev_room_id) | first }}"
               prev_last_complete_clean_mode: "{{ prev_room.last_complete_clean_mode | default('none') }}"
+              prev_room_finished: "{{ prev_room.last_clean_cycle == clean_cycle and prev_room.cleaned_area >= prev_room.threshold_area }}"
+          - variables:
+              prev_room: >
+                {{prev_room | combine({ 
+                  "post_actions": "{{ prev_room.post_actions | default({}) }}"
+                })}}
+          # Post Actions
           - if:
               - condition: template
-                value_template: "{{ prev_room.last_clean_cycle == clean_cycle and prev_room.cleaned_area >= prev_room.threshold_area and prev_room.self_clean_afterwards and not(prev_room.self_clean_initiated) and cleaning_progress < skip_self_clean_progress_threshold and ('mopping' in prev_last_complete_clean_mode) }}"
+                value_template: "{{ not(prev_room.post_actions.executed | default(true)) and prev_room_finished }}"
             then:
-              - action: button.press
-                target:
-                  entity_id: "{{ self_clean_entity }}"
-                data: {}
+              - if:
+                  - condition: template
+                    value_template: "{{ prev_room.post_actions.stop | default(false) }}"
+                then:
+                  - action: vacuum.return_to_base
+                    metadata: {}
+                    data: {}
+                    target:
+                      entity_id: "{{ vacuum_entity }}"
+              - if:
+                  - condition: template
+                    value_template: "{{ (prev_room.self_clean_afterwards |default(false)) and cleaning_progress < skip_self_clean_progress_threshold and ('mopping' in prev_last_complete_clean_mode) }}"
+                then:
+                  - action: button.press
+                    target:
+                      entity_id: "{{ self_clean_entity }}"
+                    data: {}              
               - variables:
                   prev_room: >
                     {{prev_room | combine({ 
-                      "self_clean_initiated": true
+                      "post_actions": prev_room.post_actions | combine({ 
+                        "executed": true
+                      })
                     })}}
               - action: todo.update_item
                 data:
                   item: "{{ prev_room.todo_item}}"
                   description: "{{ prev_room | to_json }}"
                 target:
-                  entity_id: "{{ todo_list_entity }}"     
+                  entity_id: "{{ todo_list_entity }}"
+              - variables:
+                  room: "{{prev_room}}"
+              - choose: []
+                default: !input room_finished_actions
+              - action: todo.update_item
+                data:
+                  item: "{{ prev_room.todo_item}}"
+                  description: "{{ prev_room | to_json }}"
+                target:
+                  entity_id: "{{ todo_list_entity }}"
 mode: queued
