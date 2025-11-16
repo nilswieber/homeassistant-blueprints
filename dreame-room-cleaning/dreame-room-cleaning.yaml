@@ -372,7 +372,7 @@ actions:
                       current_room: >
                         {{ current_room | combine({
                             "cleaned_area": prev_cleaned_area + diff_area,
-                            "progress": min(100, (prev_cleaned_area + diff_area) / current_room.threshold_area),
+                            "progress": min(100, ((prev_cleaned_area + diff_area) / current_room.threshold_area) * 100),
                             "last_clean": now().isoformat()
                           })
                         }}
