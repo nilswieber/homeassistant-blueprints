@@ -442,6 +442,9 @@ actions:
               cleaning_mode_entities: >-
                 {{ device_entities(vacuum_device_id) |
                 select('match','select\..*room.*_cleaning_mode') |list }}
+              cleaning_order_entities: >-
+                {{ device_entities(vacuum_device_id) |
+                select('match','select\..*room.*_order') |list }}
               rooms: "{{ all_rooms_to_clean }}"
           - action: select.select_option
             metadata: {}
@@ -464,6 +467,12 @@ actions:
               minutes: 0
               seconds: 0
               milliseconds: 500
+          - if:
+            - condition: template
+              value_template: "{{ cleaning_order == 'last_complete_clean' }}"
+            then:
+              - variables:
+                  room: "{{ rooms | sort(attribute='last_complete_clean') | sort(attribute='cleaning_priority', reverse=true) | list }}"
           - repeat:
               count: "{{ rooms | count }}"
               sequence:
@@ -473,6 +482,7 @@ actions:
                     cleaning_times_entity: "{{ cleaning_times_entities | select('match','.*room_'+ (room_id | string) +'_.*') | list | first}}"
                     cleaning_mode_entity: "{{ cleaning_mode_entities | select('match','.*room_'+ (room_id | string) +'_.*') | list | first}}"
                     cleaning_mode: "{{ trigger.event.data.preferred_cleaning_mode | default(room.default_cleaning_mode | default('sweeping_and_mopping')) }}"
+                    cleaning_order_entity: "{{ cleaning_order_entities | select('match','.*room_'+ (room_id | string) +'_.*') | list | first}}"
                 - action: select.select_option
                   metadata: {}
                   data:
@@ -485,16 +495,16 @@ actions:
                     option: "{{ cleaning_mode }}"
                   target:
                     entity_id: "{{ cleaning_mode_entity }}"
+                - action: select.select_option
+                  metadata: {}
+                  data:
+                    option: "{{ repeat.index }}"
+                  target:
+                    entity_id: "{{ cleaning_order_entity }}"
           - if:
               - condition: template
                 value_template: "{{ (rooms | count) > 0 }}"
             then:
-              - if:
-                  - condition: template
-                    value_template: "{{ cleaning_order == 'last_complete_clean' }}"
-                then:
-                  - variables:
-                      room: "{{ rooms | sort(attribute='last_complete_clean') | sort(attribute='cleaning_priority', reverse=true) | list }}"
               - choose: []
                 default: !input pre_cleaning_actions
               - action: dreame_vacuum.vacuum_clean_segment
