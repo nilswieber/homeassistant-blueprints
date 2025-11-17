@@ -574,15 +574,20 @@ actions:
                     value_template: "{{ (current_room.progress | default(0)) > continue_room_threshold }}"
                   then:
                     - variables:
-                        post_actions: >
-                          {{ current_room.post_actions | default({}) | combine({
-                              "stop": true
+                        current_room: >                     
+                          {{
+                            current_room | combine({ 
+                              "post_actions": current_room.post_actions | default({}) | combine({
+                                "stop": true
+                              })
                             })
                           }}
-                        current_room: >                     
-                          {{current_room | combine({ 
-                            "post_actions": post_actions
-                          })}}
+                    - action: todo.update_item
+                      data:
+                        item: "{{ current_room.todo_item}}"
+                        description: "{{ current_room | to_json }}"
+                      target:
+                        entity_id: "{{ todo_list_entity }}"
                   else:
                     - action: vacuum.return_to_base
                       metadata: {}
