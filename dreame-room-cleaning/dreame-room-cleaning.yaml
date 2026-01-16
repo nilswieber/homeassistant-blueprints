@@ -630,14 +630,15 @@ actions:
                     data: {}
                     target:
                       entity_id: "{{ vacuum_entity }}"
-              - if:
-                  - condition: template
-                    value_template: "{{ (prev_room.self_clean_afterwards |default(false)) and cleaning_progress < skip_self_clean_progress_threshold and ('mopping' in prev_last_complete_clean_mode) }}"
-                then:
-                  - action: button.press
-                    target:
-                      entity_id: "{{ self_clean_entity }}"
-                    data: {}              
+                else:
+                  - if:
+                      - condition: template
+                        value_template: "{{ (prev_room.self_clean_afterwards |default(false)) and cleaning_progress < skip_self_clean_progress_threshold and ('mopping' in prev_last_complete_clean_mode) }}"
+                    then:
+                      - action: button.press
+                        target:
+                          entity_id: "{{ self_clean_entity }}"
+                        data: {}              
               - variables:
                   prev_room: >
                     {{prev_room | combine({ 
