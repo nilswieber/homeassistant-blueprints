@@ -242,7 +242,7 @@ triggers:
     to: null
     id: room-change
   - trigger: time_pattern
-    minutes: "/1"
+    minutes: "*"
     id: stop-watchdog
 conditions: []
 actions:
@@ -711,13 +711,22 @@ actions:
             id:
               - stop-watchdog
         sequence:
+          - variables:
+              flagged_room_json: >-
+                {% set ns = namespace(found=none) %}
+                {% for r in all_room_definitions %}
+                  {% set post = r.get('post_actions', {}) %}
+                  {% if (post.get('stop', false)) and not (post.get('executed', true)) and (r.id != current_room_id) %}
+                    {% if ns.found is none %}
+                      {% set ns.found = r %}
+                    {% endif %}
+                  {% endif %}
+                {% endfor %}
+                {{ (ns.found or {}) | to_json }}
+              flagged_room: "{{ flagged_room_json | from_json }}"
           - if:
               - condition: template
-                value_template: >-
-                  {{ (current_room.post_actions.stop | default(false, true))
-                     and not (current_room.post_actions.executed | default(true, true))
-                     and (current_room.cleaned_area | default(0)) >= (current_room.threshold_area | default(-1))
-                     and states(vacuum_entity) == 'cleaning' }}
+                value_template: "{{ (flagged_room.id is defined) and states(vacuum_entity) == 'cleaning' }}"
             then:
               - action: vacuum.return_to_base
                 metadata: {}
@@ -725,15 +734,15 @@ actions:
                 target:
                   entity_id: "{{ vacuum_entity }}"
               - variables:
-                  current_room: >
-                    {{ current_room | combine({
-                        "post_actions": current_room.post_actions | combine({"executed": true})
+                  flagged_room: >
+                    {{ flagged_room | combine({
+                        "post_actions": flagged_room.post_actions | combine({"executed": true})
                       })
                     }}
               - action: todo.update_item
                 data:
-                  item: "{{ current_room.todo_item }}"
-                  description: "{{ current_room | to_json }}"
+                  item: "{{ flagged_room.todo_item }}"
+                  description: "{{ flagged_room | to_json }}"
                 target:
                   entity_id: "{{ todo_list_entity }}"
 mode: queued
