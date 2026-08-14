@@ -715,6 +715,8 @@ actions:
               - condition: template
                 value_template: >-
                   {{ (current_room.post_actions.stop | default(false, true))
+                     and not (current_room.post_actions.executed | default(true, true))
+                     and (current_room.cleaned_area | default(0)) >= (current_room.threshold_area | default(-1))
                      and states(vacuum_entity) == 'cleaning' }}
             then:
               - action: vacuum.return_to_base
@@ -722,4 +724,16 @@ actions:
                 data: {}
                 target:
                   entity_id: "{{ vacuum_entity }}"
+              - variables:
+                  current_room: >
+                    {{ current_room | combine({
+                        "post_actions": current_room.post_actions | combine({"executed": true})
+                      })
+                    }}
+              - action: todo.update_item
+                data:
+                  item: "{{ current_room.todo_item }}"
+                  description: "{{ current_room | to_json }}"
+                target:
+                  entity_id: "{{ todo_list_entity }}"
 mode: queued
