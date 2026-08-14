@@ -229,13 +229,11 @@ triggers:
     to: null
     id: occupancy-change
   - trigger: state
-    entity_id: !input home_zone
-    attribute: persons
+    entity_id: !input persons
     id: persons-change-leave
     for: !input leave_duration
   - trigger: state
-    entity_id: !input home_zone
-    attribute: persons
+    entity_id: !input persons
     id: persons-change-enter
     for: !input enter_duration
   - trigger: state
@@ -564,10 +562,52 @@ actions:
             id:
               - persons-change-leave
               - persons-change-enter
+          - condition: template
+            value_template: "{{ home_zone not in [none, '', []] }}"
         sequence:
             - variables:
-                from_person_count: "{{ trigger.from_state.attributes.persons | intersect(persons) | count }}"
-                to_person_count: "{{ trigger.to_state.attributes.persons | intersect(persons) | count }}"
+                home_zone_lat: "{{ state_attr(home_zone, 'latitude') }}"
+                home_zone_lon: "{{ state_attr(home_zone, 'longitude') }}"
+                home_zone_radius: "{{ state_attr(home_zone, 'radius') | float(100) }}"
+                home_zone_slug: "{{ home_zone.split('.')[-1] }}"
+            - variables:
+                zone_counts: >-
+                  {% set ns = namespace(from_count=0, to_count=0) %}
+                  {% for p in persons %}
+                    {% if p == trigger.entity_id %}
+                      {% set f_lat = (trigger.from_state.attributes.get('latitude') if trigger.from_state else none) %}
+                      {% set f_lon = (trigger.from_state.attributes.get('longitude') if trigger.from_state else none) %}
+                      {% set f_acc = (trigger.from_state.attributes.get('gps_accuracy', 0) if trigger.from_state else 0) | float(0) %}
+                      {% if f_lat is not none and f_lon is not none %}
+                        {% set f_in = (distance(f_lat, f_lon, home_zone_lat, home_zone_lon) * 1000) <= (home_zone_radius + f_acc) %}
+                      {% else %}
+                        {% set f_in = (trigger.from_state.state == home_zone_slug if trigger.from_state else false) %}
+                      {% endif %}
+                      {% set t_lat = (trigger.to_state.attributes.get('latitude') if trigger.to_state else none) %}
+                      {% set t_lon = (trigger.to_state.attributes.get('longitude') if trigger.to_state else none) %}
+                      {% set t_acc = (trigger.to_state.attributes.get('gps_accuracy', 0) if trigger.to_state else 0) | float(0) %}
+                      {% if t_lat is not none and t_lon is not none %}
+                        {% set t_in = (distance(t_lat, t_lon, home_zone_lat, home_zone_lon) * 1000) <= (home_zone_radius + t_acc) %}
+                      {% else %}
+                        {% set t_in = (trigger.to_state.state == home_zone_slug if trigger.to_state else false) %}
+                      {% endif %}
+                      {% if f_in %}{% set ns.from_count = ns.from_count + 1 %}{% endif %}
+                      {% if t_in %}{% set ns.to_count = ns.to_count + 1 %}{% endif %}
+                    {% else %}
+                      {% set lat = state_attr(p, 'latitude') %}
+                      {% set lon = state_attr(p, 'longitude') %}
+                      {% set acc = state_attr(p, 'gps_accuracy') | float(0) %}
+                      {% if lat is not none and lon is not none %}
+                        {% set p_in = (distance(lat, lon, home_zone_lat, home_zone_lon) * 1000) <= (home_zone_radius + acc) %}
+                      {% else %}
+                        {% set p_in = (states(p) == home_zone_slug) %}
+                      {% endif %}
+                      {% if p_in %}{% set ns.from_count = ns.from_count + 1 %}{% set ns.to_count = ns.to_count + 1 %}{% endif %}
+                    {% endif %}
+                  {% endfor %}
+                  {{ {"from": ns.from_count, "to": ns.to_count} | to_json }}
+                from_person_count: "{{ (zone_counts | from_json).from }}"
+                to_person_count: "{{ (zone_counts | from_json).to }}"
             - if:
               - condition: template
                 value_template: "{{ trigger.id == 'persons-change-enter' and from_person_count == 0 and to_person_count > 0 and states(vacuum_entity) == 'cleaning' }}"
