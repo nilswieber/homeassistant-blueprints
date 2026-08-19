@@ -128,6 +128,9 @@ blueprint:
       name: Zone (Home)
       description: >
         If set it triggers a cleaning after all specified Persons have left.
+
+        **Note:** the zone must be an *active* zone (i.e. it is reflected in the
+        state of the person entities). Passive zones are not detected reliably.
       selector:
         entity:
           filter:
@@ -228,12 +231,17 @@ triggers:
     entity_id: !input occupancy_sensors
     to: null
     id: occupancy-change
+  # FIX: `to: null` added -> attribute-only changes (GPS pings) no longer
+  # trigger, which previously reset the `for:` timer on every position update
+  # and made leave_duration/enter_duration effectively useless.
   - trigger: state
     entity_id: !input persons
+    to: null
     id: persons-change-leave
     for: !input leave_duration
   - trigger: state
     entity_id: !input persons
+    to: null
     id: persons-change-enter
     for: !input enter_duration
   - trigger: state
@@ -264,7 +272,8 @@ actions:
           sequence:
             - variables:
                 vacuum_room: "{{ vacuum_rooms[repeat.index -1] }}"
-                room_definition: "{{\_{\"id\": vacuum_room.id, \"threshold_area\": -1} }}\n"
+                room_definition: >-
+                  {{ {"id": vacuum_room.id, "threshold_area": -1} }}
             - action: todo.add_item
               target:
                 entity_id: "{{ todo_list_entity }}"
@@ -566,48 +575,62 @@ actions:
             value_template: "{{ home_zone not in [none, '', []] }}"
         sequence:
             - variables:
-                home_zone_lat: "{{ state_attr(home_zone, 'latitude') }}"
-                home_zone_lon: "{{ state_attr(home_zone, 'longitude') }}"
+                home_zone_lat: "{{ state_attr(home_zone, 'latitude') | float(none) }}"
+                home_zone_lon: "{{ state_attr(home_zone, 'longitude') | float(none) }}"
                 home_zone_radius: "{{ state_attr(home_zone, 'radius') | float(100) }}"
-                home_zone_slug: "{{ home_zone.split('.')[-1] }}"
+                # FIX: a person entity's state is the zone's *friendly name*,
+                # not the entity slug (only zone.home resolves to 'home').
+                home_zone_state: >-
+                  {{ 'home' if home_zone == 'zone.home'
+                     else (state_attr(home_zone, 'friendly_name') or home_zone.split('.')[-1]) }}
+                zone_has_coords: >-
+                  {{ state_attr(home_zone, 'latitude') is not none
+                     and state_attr(home_zone, 'longitude') is not none }}
+            # FIX: distance() returns km OR miles depending on the configured
+            # unit system and is rounded to 2 decimals (= 10 m resolution when
+            # metric). Radius and gps_accuracy are always metres, so the old
+            # `* 1000` was both unit-dependent and imprecise. We compute the
+            # distance in metres ourselves (equirectangular approximation, more
+            # than accurate enough for zone-sized radii).
+            # FIX: no to_json/from_json round-trip -> the rendered string is
+            # already coerced back into a native dict by HA, so from_json would
+            # receive a dict and raise ValueError.
             - variables:
                 zone_counts: >-
                   {% set ns = namespace(from_count=0, to_count=0) %}
                   {% for p in persons %}
-                    {% if p == trigger.entity_id %}
-                      {% set f_lat = (trigger.from_state.attributes.get('latitude') if trigger.from_state else none) %}
-                      {% set f_lon = (trigger.from_state.attributes.get('longitude') if trigger.from_state else none) %}
-                      {% set f_acc = (trigger.from_state.attributes.get('gps_accuracy', 0) if trigger.from_state else 0) | float(0) %}
-                      {% if f_lat is not none and f_lon is not none %}
-                        {% set f_in = (distance(f_lat, f_lon, home_zone_lat, home_zone_lon) * 1000) <= (home_zone_radius + f_acc) %}
+                    {% set is_trig = (p == trigger.entity_id) %}
+                    {% for phase in ['from', 'to'] %}
+                      {% if is_trig %}
+                        {% set st = trigger.from_state if phase == 'from' else trigger.to_state %}
                       {% else %}
-                        {% set f_in = (trigger.from_state.state == home_zone_slug if trigger.from_state else false) %}
+                        {% set st = states[p] %}
                       {% endif %}
-                      {% set t_lat = (trigger.to_state.attributes.get('latitude') if trigger.to_state else none) %}
-                      {% set t_lon = (trigger.to_state.attributes.get('longitude') if trigger.to_state else none) %}
-                      {% set t_acc = (trigger.to_state.attributes.get('gps_accuracy', 0) if trigger.to_state else 0) | float(0) %}
-                      {% if t_lat is not none and t_lon is not none %}
-                        {% set t_in = (distance(t_lat, t_lon, home_zone_lat, home_zone_lon) * 1000) <= (home_zone_radius + t_acc) %}
+                      {% set lat = (st.attributes.get('latitude') if st else none) %}
+                      {% set lon = (st.attributes.get('longitude') if st else none) %}
+                      {% set acc = (st.attributes.get('gps_accuracy', 0) if st else 0) | float(0) %}
+                      {% if zone_has_coords and lat is not none and lon is not none %}
+                        {% set dlat = ((lat | float(0)) - home_zone_lat) * pi / 180 %}
+                        {% set dlon = ((lon | float(0)) - home_zone_lon) * pi / 180 %}
+                        {% set mlat = ((lat | float(0)) + home_zone_lat) * pi / 360 %}
+                        {% set dist = 6371000 * sqrt((dlon * cos(mlat)) ** 2 + dlat ** 2) %}
+                        {% set inside = (dist - acc) < home_zone_radius %}
                       {% else %}
-                        {% set t_in = (trigger.to_state.state == home_zone_slug if trigger.to_state else false) %}
+                        {% set inside = (st.state == home_zone_state) if st else false %}
                       {% endif %}
-                      {% if f_in %}{% set ns.from_count = ns.from_count + 1 %}{% endif %}
-                      {% if t_in %}{% set ns.to_count = ns.to_count + 1 %}{% endif %}
-                    {% else %}
-                      {% set lat = state_attr(p, 'latitude') %}
-                      {% set lon = state_attr(p, 'longitude') %}
-                      {% set acc = state_attr(p, 'gps_accuracy') | float(0) %}
-                      {% if lat is not none and lon is not none %}
-                        {% set p_in = (distance(lat, lon, home_zone_lat, home_zone_lon) * 1000) <= (home_zone_radius + acc) %}
-                      {% else %}
-                        {% set p_in = (states(p) == home_zone_slug) %}
+                      {% if inside %}
+                        {% if phase == 'from' %}
+                          {% set ns.from_count = ns.from_count + 1 %}
+                        {% else %}
+                          {% set ns.to_count = ns.to_count + 1 %}
+                        {% endif %}
                       {% endif %}
-                      {% if p_in %}{% set ns.from_count = ns.from_count + 1 %}{% set ns.to_count = ns.to_count + 1 %}{% endif %}
-                    {% endif %}
+                    {% endfor %}
                   {% endfor %}
-                  {{ {"from": ns.from_count, "to": ns.to_count} | to_json }}
-                from_person_count: "{{ (zone_counts | from_json).from }}"
-                to_person_count: "{{ (zone_counts | from_json).to }}"
+                  {{ {"from": ns.from_count, "to": ns.to_count} }}
+            - variables:
+                from_person_count: "{{ zone_counts['from'] | int(0) }}"
+                to_person_count: "{{ zone_counts['to'] | int(0) }}"
             - if:
               - condition: template
                 value_template: "{{ trigger.id == 'persons-change-enter' and from_person_count == 0 and to_person_count > 0 and states(vacuum_entity) == 'cleaning' }}"
@@ -711,8 +734,11 @@ actions:
             id:
               - stop-watchdog
         sequence:
+          # FIX: no to_json/from_json round-trip. The rendered '{}' was coerced
+          # back into a native dict by HA, so from_json received a dict instead
+          # of a string and raised ValueError.
           - variables:
-              flagged_room_json: >-
+              flagged_room: >-
                 {% set ns = namespace(found=none) %}
                 {% for r in all_room_definitions %}
                   {% set post = r.get('post_actions', {}) %}
@@ -722,8 +748,7 @@ actions:
                     {% endif %}
                   {% endif %}
                 {% endfor %}
-                {{ (ns.found or {}) | to_json }}
-              flagged_room: "{{ flagged_room_json | from_json }}"
+                {{ ns.found | default({}, true) }}
           - if:
               - condition: template
                 value_template: "{{ (flagged_room.id is defined) and states(vacuum_entity) == 'cleaning' }}"
