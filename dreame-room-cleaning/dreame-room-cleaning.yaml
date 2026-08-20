@@ -285,8 +285,11 @@ actions:
       vacuum_device_id: "{{ device_attr(vacuum_entity,'id') }}"
       all_room_definitions: >-
         {{ items_to_clean[todo_list_entity]['items']| map(attribute='description') | map('from_json') | list }}
+      # FIX: room_id kann als String geliefert werden -> Vergleich mit den
+      # (numerischen) Raum-IDs aus der ToDo-Beschreibung schlug dann fehl und
+      # current_room blieb leer, wodurch das Stop-Flag nie gesetzt wurde.
       current_room_id: >-
-        {{ state_attr(current_room_entity,'room_id') }}
+        {{ state_attr(current_room_entity,'room_id') | int(-1) }}
       cleaning_progress_entity: >-
         {{ device_entities(vacuum_device_id) | select('match','sensor\..*_cleaning_progress') |list |first }}
       cleaning_count_entity: >-
@@ -299,7 +302,6 @@ actions:
       cleaning_count: "{{ states(cleaning_count_entity) }}"
       state: "{{ states(state_entity) }}"
       clean_cycle: "{{ cleaning_count + 1 }}"
-      current_room: "{{ all_room_definitions | selectattr('id','eq',current_room_id) | first | default({}, true) }}"
   - repeat:
       count: "{{ all_room_definitions | count }}"
       sequence:
@@ -324,12 +326,20 @@ actions:
                 "last_complete_clean": room_definition.last_complete_clean | default("1970-01-01T00:00:00.000000+00:00")
                 }) 
               }}
-        - data:
-            item: "{{ room_definition.todo_item }}"
-            description: "{{ room_definition | to_json }}"
-          action: todo.update_item
-          target:
-            entity_id: "{{ todo_list_entity }}"
+        # FIX: Nur schreiben, wenn sich wirklich etwas geaendert hat. Vorher
+        # wurden bei JEDEM Trigger (u.a. bei jeder Flaechenaenderung) alle
+        # ToDo-Eintraege neu geschrieben. Das saettigte die queued-Queue, so
+        # dass Watchdog- und Personen-Trigger verworfen wurden.
+        - if:
+            - condition: template
+              value_template: "{{ room_definition != all_room_definitions[repeat.index - 1] }}"
+          then:
+            - data:
+                item: "{{ room_definition.todo_item }}"
+                description: "{{ room_definition | to_json }}"
+              action: todo.update_item
+              target:
+                entity_id: "{{ todo_list_entity }}"
   - action: todo.get_items
     metadata: {}
     target:
@@ -339,6 +349,9 @@ actions:
       all_room_definitions: >-
               {{ items_to_clean[todo_list_entity]['items']| map(attribute='description') | map('from_json') | list }}
       all_rooms_to_clean: "{{ all_room_definitions | selectattr('is_todo','eq', true) | list}}"
+      # FIX: current_room wurde bisher aus der *ersten*, noch nicht
+      # normalisierten Raumliste bestimmt (ohne todo_item/threshold_area).
+      current_room: "{{ all_room_definitions | selectattr('id','eq',current_room_id) | first | default({}, true) }}"
   - choose:
       - conditions:
           - condition: trigger
@@ -349,20 +362,31 @@ actions:
               - condition: template
                 value_template: "{{ (states(cleaned_area_entity) | float(-1)) == 0 }}"
             then:
+              # FIX: Bisher wurden nur die offenen Raeume zurueckgesetzt. Ein
+              # bereits abgeschlossener Raum konnte so ein altes
+              # stop=true / executed=false behalten und bei der naechsten
+              # Reinigung am selben Tag einen sofortigen Stop ausloesen.
+              # post_actions wird jetzt fuer alle Raeume geleert, die
+              # Fortschrittswerte weiterhin nur fuer die zu reinigenden.
               - repeat:
-                  count: "{{ all_rooms_to_clean | count }}"
+                  count: "{{ all_room_definitions | count }}"
                   sequence:
                     - variables:
+                        room_base: "{{ all_room_definitions[repeat.index - 1] }}"
                         room_definition: >-
-                          {{ all_rooms_to_clean[repeat.index - 1] | combine({
-                              "cleaned_area": 0,
-                              "progress": 0,
-                              "self_clean_initiated": false,
+                          {{ room_base | combine({
                               "last_clean_cycle": clean_cycle,
                               "post_actions": {
                                 "executed": false
                               }
                             })
+                            | combine(
+                              {
+                                "cleaned_area": 0,
+                                "progress": 0,
+                                "self_clean_initiated": false
+                              } if (room_base.is_todo | default(false)) else {}
+                            )
                           }}
                     - action: todo.update_item
                       data:
@@ -635,9 +659,18 @@ actions:
               - condition: template
                 value_template: "{{ trigger.id == 'persons-change-enter' and from_person_count == 0 and to_person_count > 0 and states(vacuum_entity) == 'cleaning' }}"
               then:
+                # FIX: Das Stop-Flag wird jetzt IMMER gesetzt, nicht nur beim
+                # Aufschieben. Falls return_to_base wirkungslos bleibt, greifen
+                # dadurch Raumwechsel-Handler und Watchdog als Wiederholung.
+                # Ist current_room unbekannt, kann nicht aufgeschoben werden ->
+                # es wird sofort gestoppt.
+                - variables:
+                    can_defer: >-
+                      {{ (current_room.todo_item is defined)
+                         and ((current_room.progress | default(0)) > continue_room_threshold) }}
                 - if:
-                  - condition: template
-                    value_template: "{{ (current_room.progress | default(0)) > continue_room_threshold }}"
+                    - condition: template
+                      value_template: "{{ current_room.todo_item is defined }}"
                   then:
                     - variables:
                         current_room: >                     
@@ -654,7 +687,10 @@ actions:
                         description: "{{ current_room | to_json }}"
                       target:
                         entity_id: "{{ todo_list_entity }}"
-                  else:
+                - if:
+                    - condition: template
+                      value_template: "{{ not can_defer }}"
+                  then:
                     - action: vacuum.return_to_base
                       metadata: {}
                       data: {}
@@ -673,43 +709,56 @@ actions:
               - room-change  
         sequence:
           - variables:
-              prev_room_id: "{{ trigger.from_state.attributes.room_id }}"
+              # FIX: from_state bzw. room_id koennen fehlen (HA-Neustart,
+              # Fahrt ausserhalb eines Raums) -> das warf vorher einen
+              # Template-Fehler und brach den ganzen Lauf ab.
+              prev_room_id: "{{ (trigger.from_state.attributes.get('room_id') if trigger.from_state else none) | int(-1) }}"
               prev_room: "{{ all_room_definitions | selectattr('id','eq',prev_room_id) | first | default({}, true) }}"
               prev_last_complete_clean_mode: "{{ prev_room.last_complete_clean_mode | default('none') }}"
+              prev_post: "{{ prev_room.post_actions | default({}) }}"
               prev_room_finished: >-
                 {{ (prev_room.cleaned_area | default(0)) >= (prev_room.threshold_area | default(-1)) }}
           - variables:
-              prev_room: >
-                {{prev_room | combine({ 
-                  "post_actions": (prev_room.post_actions | default({}))
-                })}}
-          # Post Actions
+              # FIX: Der Stop haengt NICHT mehr an prev_room_finished. Wurde das
+              # Aufschieben ueber continue_room_threshold ausgeloest, ist der
+              # Raum per Definition noch nicht fertig (progress < 100) - die
+              # alte Bedingung war damit nie erfuellt und es wurde nie gestoppt.
+              stop_pending: >-
+                {{ (prev_post.stop | default(false)) and not (prev_post.executed | default(false)) }}
+              run_finish_actions: >-
+                {{ prev_room_finished and not (prev_post.executed | default(true)) }}
+          # 1) Stop - unabhaengig vom Fertig-Status des Raums
           - if:
               - condition: template
-                value_template: "{{ not(prev_room.post_actions.executed | default(true)) and prev_room_finished }}"
+                value_template: "{{ stop_pending }}"
             then:
-              - if:
-                  - condition: template
-                    value_template: "{{ prev_room.post_actions.stop | default(false) }}"
-                then:
-                  - action: vacuum.return_to_base
-                    metadata: {}
-                    data: {}
-                    target:
-                      entity_id: "{{ vacuum_entity }}"
-                else:
-                  - if:
-                      - condition: template
-                        value_template: "{{ (prev_room.self_clean_afterwards |default(false)) and cleaning_progress < skip_self_clean_progress_threshold and ('mopping' in prev_last_complete_clean_mode) }}"
-                    then:
-                      - action: button.press
-                        target:
-                          entity_id: "{{ self_clean_entity }}"
-                        data: {}              
+              - action: vacuum.return_to_base
+                metadata: {}
+                data: {}
+                target:
+                  entity_id: "{{ vacuum_entity }}"
+          # 2) Self Clean - nur wenn der Raum wirklich fertig wurde und nicht gestoppt wird
+          - if:
+              - condition: template
+                value_template: >-
+                  {{ run_finish_actions and not stop_pending
+                     and (prev_room.self_clean_afterwards | default(false))
+                     and cleaning_progress < skip_self_clean_progress_threshold
+                     and ('mopping' in prev_last_complete_clean_mode) }}
+            then:
+              - action: button.press
+                target:
+                  entity_id: "{{ self_clean_entity }}"
+                data: {}
+          # 3) executed persistieren
+          - if:
+              - condition: template
+                value_template: "{{ (stop_pending or run_finish_actions) and (prev_room.todo_item is defined) }}"
+            then:
               - variables:
                   prev_room: >
                     {{prev_room | combine({ 
-                      "post_actions": prev_room.post_actions | combine({ 
+                      "post_actions": prev_post | combine({ 
                         "executed": true
                       })
                     })}}
@@ -719,16 +768,15 @@ actions:
                   description: "{{ prev_room | to_json }}"
                 target:
                   entity_id: "{{ todo_list_entity }}"
+          # 4) Benutzer-Aktionen fuer den fertigen Raum
+          - if:
+              - condition: template
+                value_template: "{{ run_finish_actions }}"
+            then:
               - variables:
                   room: "{{prev_room}}"
               - choose: []
                 default: !input room_finished_actions
-              - action: todo.update_item
-                data:
-                  item: "{{ prev_room.todo_item}}"
-                  description: "{{ prev_room | to_json }}"
-                target:
-                  entity_id: "{{ todo_list_entity }}"
       - conditions:
           - condition: trigger
             id:
@@ -771,3 +819,6 @@ actions:
                 target:
                   entity_id: "{{ todo_list_entity }}"
 mode: queued
+# FIX: Standard waere max 10. Bei vielen Raeumen und haeufigen
+# Flaechen-Updates lief die Queue voll und Trigger wurden verworfen.
+max: 25
